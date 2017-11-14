@@ -1,0 +1,126 @@
+#include <ros/ros.h>
+#include <cstdlib>
+#include <geometry_msgs/Twist.h>
+#include <geometry_msgs/Pose.h>
+#include <geometry_msgs/Point.h>
+#include <geometry_msgs/Quaternion.h>
+#include <nav_msgs/Odometry.h>
+#include <math.h>
+#include <tf/transform_listener.h>
+#include <tf/LinearMath/Matrix3x3.h>
+#include <iostream>
+using namespace std;
+#define pi 3.14159
+#define Half_Circle 180
+geometry_msgs::Point position;
+float start_angle=0,goal_angular=0;
+float goal_distance=0;
+double yaw=0,pitch=0,roll=0;
+float run_distance=0,Turn_Error=0;
+float linear_speed=0.5,linear_speed1=0.3,linear_stop=0;    //linear setting
+float angular_speed=0.5,angular_speed1=0.2,angular_stop=0; //angular setting
+int rotating_singal=1;
+geometry_msgs::Point start_position,temp_position;
+geometry_msgs::Twist move_cmd;
+
+void update_speed(const nav_msgs::Odometry::ConstPtr & msg)//update Odometry
+{
+	geometry_msgs::Quaternion oritation = msg->pose.pose.orientation;
+	tf::Matrix3x3 mat(tf::Quaternion(oritation.x,oritation.y,oritation.z,oritation.w));
+	int solution_number=1;
+	mat.getEulerYPR(yaw,pitch,roll,solution_number);
+	position=msg->pose.pose.position;
+	yaw=(-yaw+pi)/pi*180;  //yaw is 0 ~ 360
+	Turn_Error=fabs(yaw-goal_angular);
+    //ROS_INFO("The yaw is:%f\t",yaw);
+	//ROS_INFO("The pitch is:%f\t",pitch);
+	//ROS_INFO("The roll is:%f\t",roll);
+    //position=msg.pose.pose.position;
+    //ROS_INFO("Position X=%f\tY=%f",position.x,position.y);
+	//ROS_INFO("Angular X=%f\tY=%f",position.x,position.y);
+}
+int main(int argc,char **argv)
+{
+    ROS_INFO("My program Start 0");
+    ros::init(argc,argv,"Adjust_Angular");
+    ros::NodeHandle n;
+    ros::Publisher cmd_pub = n.advertise<geometry_msgs::Twist>("/cmd_vel", 5);
+    ros::Rate loop_rate(5);
+    ros::NodeHandle n1;
+    ros::Subscriber odom_sub = n1.subscribe("/xqserial_server/Odom", 1, update_speed);
+    ros::spinOnce();
+    loop_rate.sleep();//initial
+    ros::Duration(5).sleep();
+    start_angle=yaw;
+    start_position=position;
+    temp_position=position;
+    move_cmd.linear.x=linear_stop;
+    move_cmd.angular.z = angular_stop;
+    int tempcount=0;
+    cmd_pub.publish(move_cmd);        //init stop
+    ros::spinOnce();
+    loop_rate.sleep();
+    goal_angular=yaw+Half_Circle;
+    if(goal_angular>2*Half_Circle)
+      goal_angular=goal_angular-2*Half_Circle;
+    goal_distance=1;
+    while (ros::ok())
+    {
+		ROS_INFO("Main is running......");
+		ROS_INFO("Angular is %f",yaw);
+		cin>>goal_angular>>goal_distance;
+		if(goal_angular==100)
+			break;
+	    if((yaw>goal_angular)&&(yaw-goal_angular)<170)
+		  rotating_singal=-1;
+	    else
+		  if((yaw<goal_angular)&&(goal_angular-yaw)>190)
+		    rotating_singal=-1;
+		  else
+		    rotating_singal=1;
+        while(Turn_Error>2)
+ 	   	{
+			if(Turn_Error>20)
+				move_cmd.angular.z = angular_speed*rotating_singal;
+			else
+				move_cmd.angular.z = angular_speed1*rotating_singal;
+			cmd_pub.publish(move_cmd);
+			ros::spinOnce();
+			loop_rate.sleep();
+	   	 }
+		 move_cmd.angular.z = angular_stop;
+		 cmd_pub.publish(move_cmd);
+		 ros::spinOnce();
+		 ros::Duration(1).sleep();
+		 temp_position=position;
+		 while((run_distance<goal_distance))
+		 {
+			if(fabs(run_distance-goal_distance)>0.6)
+			{
+				move_cmd.linear.x=linear_speed;
+			}
+			else
+			{
+				move_cmd.linear.x=linear_speed1;
+			}
+			cmd_pub.publish(move_cmd);
+			run_distance = sqrt(pow((position.x - temp_position.x), 2) + pow((position.y - temp_position.y), 2));
+			ros::spinOnce();
+			loop_rate.sleep();
+		  }
+		  ROS_INFO("Yaw is %f",yaw);
+		  move_cmd.angular.z = angular_stop;
+		  move_cmd.linear.x=linear_stop;
+		  cmd_pub.publish(move_cmd);
+		  ros::spinOnce();
+		  loop_rate.sleep();
+		  temp_position=position;
+		  run_distance=0;
+		  ros::Duration(1).sleep();
+     }
+	move_cmd.linear.x=linear_stop;
+	move_cmd.angular.z = angular_stop;
+	cmd_pub.publish(move_cmd);
+	loop_rate.sleep();
+	return 0;
+}
